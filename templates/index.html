@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZTA Event CSV Tool</title>
+    <title>ZTA Event Document CSV Convertor</title>
 
-    <!-- Google Font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -179,6 +178,45 @@
             line-height: 1.5;
         }
 
+        .file-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .file-name {
+            font-size: 0.9rem;
+            color: #5f6f7f;
+            background: #eef7f7;
+            padding: 8px 12px;
+            border-radius: 12px;
+            display: none;
+            word-break: break-word;
+            flex: 1;
+        }
+
+        .remove-btn {
+            display: none;
+            border: none;
+            background: #f3f4f6;
+            color: #7a8794;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-family: inherit;
+            font-size: 0.88rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .remove-btn:hover {
+            background: #e5e7eb;
+            color: #4b5563;
+        }
+
         .submit-btn {
             margin-top: 10px;
             width: 100%;
@@ -255,6 +293,11 @@
                 display: block;
                 margin-bottom: 10px;
             }
+
+            .file-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
         }
     </style>
 </head>
@@ -286,7 +329,11 @@
             <div class="upload-group">
                 <label for="verisky">Upload Verisky CSV Template</label>
                 <div class="upload-box">
-                    <input type="file" id="verisky" name="verisky" accept=".csv" required>
+                    <input type="file" id="verisky" name="verisky" accept=".csv" required onchange="handleFileSelect('verisky', 'veriskyFileName', 'veriskyRemove')">
+                    <div class="file-row">
+                        <div class="file-name" id="veriskyFileName"></div>
+                        <button type="button" class="remove-btn" id="veriskyRemove" onclick="clearFileInput('verisky', 'veriskyFileName', 'veriskyRemove')">× Remove</button>
+                    </div>
                     <p class="upload-note">Use the blank Verisky template file for your event.</p>
                 </div>
             </div>
@@ -294,7 +341,11 @@
             <div class="upload-group">
                 <label for="date_doc">Upload Date Doc (CSV Export)</label>
                 <div class="upload-box">
-                    <input type="file" id="date_doc" name="date_doc" accept=".csv" required>
+                    <input type="file" id="date_doc" name="date_doc" accept=".csv" required onchange="handleFileSelect('date_doc', 'dateDocFileName', 'dateDocRemove')">
+                    <div class="file-row">
+                        <div class="file-name" id="dateDocFileName"></div>
+                        <button type="button" class="remove-btn" id="dateDocRemove" onclick="clearFileInput('date_doc', 'dateDocFileName', 'dateDocRemove')">× Remove</button>
+                    </div>
                     <p class="upload-note">Export your Google Sheet as a CSV before uploading.</p>
                 </div>
             </div>
@@ -304,9 +355,38 @@
 
         <div class="divider"></div>
 
-       <p class="helper-text">
+        <p class="helper-text">
             <span class="sparkle">♛</span> Make sure both files are saved as CSVs before uploading.
         </p>
     </div>
+
+    <script>
+        function handleFileSelect(inputId, fileNameId, removeBtnId) {
+            const input = document.getElementById(inputId);
+            const fileName = document.getElementById(fileNameId);
+            const removeBtn = document.getElementById(removeBtnId);
+
+            if (input.files && input.files.length > 0) {
+                fileName.textContent = input.files[0].name;
+                fileName.style.display = 'block';
+                removeBtn.style.display = 'inline-block';
+            } else {
+                fileName.textContent = '';
+                fileName.style.display = 'none';
+                removeBtn.style.display = 'none';
+            }
+        }
+
+        function clearFileInput(inputId, fileNameId, removeBtnId) {
+            const input = document.getElementById(inputId);
+            const fileName = document.getElementById(fileNameId);
+            const removeBtn = document.getElementById(removeBtnId);
+
+            input.value = '';
+            fileName.textContent = '';
+            fileName.style.display = 'none';
+            removeBtn.style.display = 'none';
+        }
+    </script>
 </body>
 </html>

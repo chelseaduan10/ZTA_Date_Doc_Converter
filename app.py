@@ -9,24 +9,9 @@ app = Flask(__name__)
 # if blank date next to name, leave date blank
 # format of date bday
 
-
 @app.route('/')
 def home():
     return render_template('index.html')
-
-'''
-NICKNAME_MAP = {
-    "abby": "abigail",
-    "ally": "allison",
-    "catey": "catherine",
-    "dani": "danielle",
-    "gabby": "gabrielle",
-    "jess": "jessica",
-    "maggie": "marguerite",
-    "nikka": "dominique",
-    "sophie": "sofia",
-}
-'''
 
 def clean_basic_name(name):
     if pd.isna(name):
@@ -77,12 +62,6 @@ def build_match_key(name):
         return ""
 
     parts = name.split()
-
-    # replace common nicknames
-    #parts = [NICKNAME_MAP.get(part, part) for part in parts]
-
-    #return " ".join(parts)
-
 
 @app.route('/process', methods=['POST'])
 def process_files():

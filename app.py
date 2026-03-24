@@ -4,23 +4,20 @@ import io
 import re
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
-# option to enter names of girls not going - must delete girls off list who are not going
-# if blank date next to name, leave date blank
-# format of date bday
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
+
 def clean_basic_name(name):
     if pd.isna(name):
         return ""
-
     name = str(name).strip()
     if not name:
         return ""
-
     name = re.sub(r"\s+", " ", name)
     return name
 
@@ -47,26 +44,28 @@ def normalize_sheet_name(name):
 
 def build_match_key(name):
     """
-    Creates a looser match key so names like:
-    Chloe O'Neill -> chloe oneill
+    Strict normalization only:
+    - lowercase
+    - remove punctuation
+    - collapse spaces
+    No nickname replacements.
     """
     name = clean_basic_name(name).lower()
-
-    # remove punctuation
     name = re.sub(r"[^a-z0-9\s]", "", name)
-
-    # collapse whitespace
     name = re.sub(r"\s+", " ", name).strip()
+    return name
 
-    if not name:
-        return ""
-
-    parts = name.split()
 
 @app.route('/process', methods=['POST'])
 def process_files():
-    verisky_file = request.files['verisky']   # blank template csv
-    date_file = request.files['date_doc']     # google sheet csv
+    verisky_file = request.files['verisky']
+    date_file = request.files['date_doc']
+
+    if not verisky_file.filename.lower().endswith('.csv'):
+        return "Please upload a CSV for the Verisky template."
+
+    if not date_file.filename.lower().endswith('.csv'):
+        return "Please upload a CSV for the Date Doc."
 
     # --------------------------------------
     # READ FILES
@@ -74,7 +73,6 @@ def process_files():
     verisky_df = pd.read_csv(verisky_file, skiprows=1)
     date_df = pd.read_csv(date_file, skiprows=1)
 
-    # Clean column names only
     verisky_df.columns = (
         verisky_df.columns
         .str.strip()
@@ -82,11 +80,10 @@ def process_files():
     )
     date_df.columns = date_df.columns.str.strip()
 
-    # Save exact original template column order
     original_verisky_columns = verisky_df.columns.tolist()
 
     # --------------------------------------
-    # CHECK REQUIRED VERISKY COLUMNS
+    # CHECK REQUIRED TEMPLATE COLUMNS
     # --------------------------------------
     required_verisky_cols = [
         "Member Name",
@@ -101,13 +98,13 @@ def process_files():
             return f"ERROR: Verisky template is missing required column: {col}"
 
     # --------------------------------------
-    # CHECK SHEET FORMAT
+    # CHECK GOOGLE SHEET FORMAT
     # --------------------------------------
     if date_df.shape[1] != 8:
         return "ERROR: Date Doc format has changed."
 
     # --------------------------------------
-    # BUILD CLEAN DATE DATAFRAME
+    # BUILD CLEAN SOURCE DATAFRAME
     # --------------------------------------
     clean_date_df = pd.DataFrame({
         "Member Name": date_df.iloc[:, 1],   # Col B
@@ -116,102 +113,122 @@ def process_files():
         "Guest DOB": date_df.iloc[:, 7]      # Col H
     })
 
-    # remove spacer rows
     clean_date_df = clean_date_df.dropna(how="all")
 
     # --------------------------------------
-    # CLEAN + NORMALIZE
+    # NORMALIZE NAMES
     # --------------------------------------
     clean_date_df["Member Name"] = clean_date_df["Member Name"].apply(normalize_sheet_name)
     clean_date_df["Guest Name"] = clean_date_df["Guest Name"].apply(normalize_sheet_name)
     verisky_df["Member Name"] = verisky_df["Member Name"].apply(normalize_template_name)
 
-    # datetime parsing
+    # --------------------------------------
+    # PARSE DATES
+    # --------------------------------------
     clean_date_df["Member DOB"] = pd.to_datetime(clean_date_df["Member DOB"], errors="coerce")
     clean_date_df["Guest DOB"] = pd.to_datetime(clean_date_df["Guest DOB"], errors="coerce")
     verisky_df["Member Birthdate"] = pd.to_datetime(verisky_df["Member Birthdate"], errors="coerce")
 
-    # build merge keys
+    # --------------------------------------
+    # BUILD STRICT KEYS
+    # --------------------------------------
     clean_date_df["member_name_key"] = clean_date_df["Member Name"].apply(build_match_key)
     verisky_df["member_name_key"] = verisky_df["Member Name"].apply(build_match_key)
 
     clean_date_df["member_dob_key"] = clean_date_df["Member DOB"].dt.strftime("%Y-%m-%d").fillna("")
     verisky_df["member_dob_key"] = verisky_df["Member Birthdate"].dt.strftime("%Y-%m-%d").fillna("")
 
-    # output formatting
-    clean_date_df["Guest DOB Out"] = clean_date_df["Guest DOB"].dt.strftime("%m/%d/%Y").fillna("")
+    clean_date_df["guest_dob_out"] = clean_date_df["Guest DOB"].dt.strftime("%m/%d/%Y").fillna("")
 
     # --------------------------------------
-    # BUILD LOOKUP TABLE
+    # SOURCE ROWS TO USE
     # --------------------------------------
-    guest_lookup = clean_date_df[[
+    lookup_source = clean_date_df[
+        (clean_date_df["member_name_key"] != "") &
+        (clean_date_df["member_dob_key"] != "")
+    ][[
         "member_name_key",
         "member_dob_key",
         "Guest Name",
-        "Guest DOB Out"
+        "guest_dob_out",
+        "Member Name"
     ]].copy()
 
-    guest_lookup = guest_lookup.rename(columns={
-        "Guest Name": "lookup_guest_name",
-        "Guest DOB Out": "lookup_guest_dob"
-    })
-
-    # Remove blank keys
-    guest_lookup = guest_lookup[
-        (guest_lookup["member_name_key"] != "") &
-        (guest_lookup["member_dob_key"] != "")
-    ]
-
-    # Keep first match if duplicates exist
-    guest_lookup = guest_lookup.drop_duplicates(
+    # --------------------------------------
+    # FAIL IF DUPLICATE SOURCE KEYS EXIST
+    # --------------------------------------
+    duplicate_keys = lookup_source.duplicated(
         subset=["member_name_key", "member_dob_key"],
-        keep="first"
+        keep=False
     )
 
-    # --------------------------------------
-    # MERGE ONLY FOR LOOKUP
-    # --------------------------------------
-    merged = verisky_df.merge(
-        guest_lookup,
-        on=["member_name_key", "member_dob_key"],
-        how="left"
-    )
+    if duplicate_keys.any():
+        dupes = lookup_source.loc[duplicate_keys, [
+            "Member Name",
+            "member_dob_key",
+            "Guest Name",
+            "guest_dob_out"
+        ]].sort_values(["Member Name", "member_dob_key"])
+
+        return (
+            "ERROR: Duplicate member name + birthdate rows found in the Google Sheet CSV. "
+            "Please clean the source file so each member appears only once.<br><br>"
+            + dupes.to_html(index=False)
+        )
 
     # --------------------------------------
-    # POPULATE EXISTING TEMPLATE COLUMNS ONLY
+    # BUILD EXACT LOOKUP DICTIONARY
     # --------------------------------------
-    merged["Guest 1 Name"] = merged["lookup_guest_name"].fillna("")
-    merged["Guest 1 Birthdate"] = merged["lookup_guest_dob"].fillna("")
-    merged["Notes"] = ""
+    lookup_dict = {}
 
-    # restore member birthdate display
-    merged["Member Birthdate"] = pd.to_datetime(
-        merged["Member Birthdate"],
+    for _, row in lookup_source.iterrows():
+        key = (row["member_name_key"], row["member_dob_key"])
+        lookup_dict[key] = {
+            "guest_name": row["Guest Name"] if pd.notna(row["Guest Name"]) else "",
+            "guest_dob": row["guest_dob_out"] if pd.notna(row["guest_dob_out"]) else ""
+        }
+
+    # --------------------------------------
+    # POPULATE TEMPLATE ROW BY ROW
+    # --------------------------------------
+    guest_names = []
+    guest_dobs = []
+
+    for _, row in verisky_df.iterrows():
+        key = (row["member_name_key"], row["member_dob_key"])
+        match = lookup_dict.get(key)
+
+        if match:
+            guest_names.append(match["guest_name"])
+            guest_dobs.append(match["guest_dob"])
+        else:
+            guest_names.append("")
+            guest_dobs.append("")
+
+    verisky_df["Guest 1 Name"] = guest_names
+    verisky_df["Guest 1 Birthdate"] = guest_dobs
+    verisky_df["Notes"] = ""
+
+    # restore display format
+    verisky_df["Member Birthdate"] = pd.to_datetime(
+        verisky_df["Member Birthdate"],
         errors="coerce"
     ).dt.strftime("%m/%d/%Y").fillna("")
 
     # --------------------------------------
     # REMOVE HELPER COLUMNS
     # --------------------------------------
-    helper_cols = [
-        "member_name_key",
-        "member_dob_key",
-        "lookup_guest_name",
-        "lookup_guest_dob"
-    ]
+    verisky_df = verisky_df.drop(columns=["member_name_key", "member_dob_key"], errors="ignore")
 
-    merged = merged.drop(columns=[col for col in helper_cols if col in merged.columns])
-
-    # preserve exact original template columns and order
-    merged = merged[original_verisky_columns]
-
-    merged = merged.fillna("")
+    # preserve template exactly
+    verisky_df = verisky_df[original_verisky_columns]
+    verisky_df = verisky_df.fillna("")
 
     # --------------------------------------
     # OUTPUT CSV
     # --------------------------------------
     output = io.StringIO()
-    merged.to_csv(output, index=False)
+    verisky_df.to_csv(output, index=False)
     output.seek(0)
 
     return send_file(
@@ -223,4 +240,4 @@ def process_files():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)
